@@ -18,43 +18,50 @@ class RLChessAgent:
         self.device = device
         self.model.eval()  # Set model to eval mode
 
-    def generate_move(self, board):
-        """
-        Generate a move using the transformer model.
-        Args:
-            board (chess.Board): Current board state.
-        Returns:
-            chess.Move: The selected move.
-        """
-        # Get move history in SAN format
-        move_history = [board.san(move) for move in board.move_stack]
-        
+    def generate_move(self, board, max_move_length=5):
+        # Use UCI strings for move history
+        move_history = [move.uci() for move in board.move_stack]
+
         # Encode move history tokens
         input_tokens = self.tokenizer.encode(move_history)
-        input_ids = torch.tensor(input_tokens, dtype=torch.long, device=self.device).unsqueeze(0)  # batch size 1
-        
-        # Generate next token logits from model
+        if isinstance(input_tokens, dict):
+            input_ids_list = input_tokens.get("input_ids", None)
+            if input_ids_list is None:
+                raise ValueError("Tokenizer encode output missing 'input_ids'")
+        else:
+            input_ids_list = input_tokens
+
+        input_ids = torch.tensor(input_ids_list, dtype=torch.long, device=self.device).unsqueeze(0)  # batch size 1
+
+        generated_tokens = []
+
+        self.model.eval()
         with torch.no_grad():
-            outputs = self.model(input_ids=input_ids)
-            logits = outputs["logits"]  # shape: (1, seq_len, vocab_size)
-        
-        # Get logits for the last token position
-        next_token_logits = logits[0, -1, :]
-        
-        # Greedy decoding (argmax)
-        next_token_id = torch.argmax(next_token_logits).item()
-        
-        # Decode next token to move string
-        next_move_str = self.tokenizer.decode([next_token_id])
-        
+            for _ in range(max_move_length):
+                outputs = self.model(input_ids=input_ids)
+                logits = outputs["logits"]  # (1, seq_len, vocab_size)
+                next_token_logits = logits[0, -1, :]
+
+                # Greedy decoding
+                next_token_id = torch.argmax(next_token_logits).item()
+                generated_tokens.append(next_token_id)
+
+                # Append next token to input_ids for next step
+                input_ids = torch.cat([input_ids, torch.tensor([[next_token_id]], device=self.device)], dim=1)
+
+                # Optionally, stop if end-of-move token generated
+                # if next_token_id == self.tokenizer.special_tokens.get("<eom>", None):
+                #     break
+
+        # Decode full generated token sequence to move string
+        next_move_str = self.tokenizer.decode(generated_tokens)
+
         # Validate and convert to chess.Move
         legal_moves = list(board.legal_moves)
         for move in legal_moves:
-            # Compare SAN or UCI with decoded move string
-            if board.san(move) == next_move_str or move.uci() == next_move_str:
+            if move.uci() == next_move_str or board.san(move) == next_move_str:
                 return move
-        
-        # If decoded move is illegal or not found, fallback to first legal move
+
         print(f"Model generated illegal or unknown move '{next_move_str}', falling back to first legal move.")
         return legal_moves[0] if legal_moves else None
 
@@ -92,33 +99,51 @@ import os
 # Add the parent directory of the script to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from data import SimpleChessTokenizer, ChessGameDataset, load_games_for_tokenizer
-from model import SimpleChessTransformer
+from src.data import SimpleChessTokenizer, ChessGameDataset, load_games_for_tokenizer
+from src.model import SimpleChessTransformer
+
+import yaml
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run RL agent with chess transformer")
+    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Config file path")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_model.pt", help="Checkpoint path")
+    args = parser.parse_args()
+
+    # Load config
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+
     # Load tokenizer
-    tokenizer_path = "../data/tokenizer.json"
+    tokenizer_path = config["paths"]["data_dir"] + "/tokenizer.json"
     tokenizer = SimpleChessTokenizer.load(tokenizer_path)
 
-    # Initialize model with tokenizer vocab size and config matching your training
+    # Initialize model with config parameters
+    model_cfg = config["model"]
     model = SimpleChessTransformer(
         vocab_size=len(tokenizer.token_to_id),
-        d_model=512,          # Use your actual config values here
-        num_layers=6,
-        num_heads=8,
-        max_seq_len=512,
-        dropout=0.1,
+        d_model=model_cfg["d_model"],
+        num_layers=model_cfg["num_layers"],
+        num_heads=model_cfg["num_heads"],
+        max_seq_len=model_cfg["max_seq_len"],
+        dropout=model_cfg["dropout"],
         pad_token_id=tokenizer.special_tokens["<pad>"]
     )
 
-    # Load pretrained weights
-    checkpoint_path = "checkpoints/best_model.pt"
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    model.load_state_dict(checkpoint["model_state_dict"])
+    checkpoint_path = args.checkpoint
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        print(f"Loading checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        print(f"No checkpoint found at {checkpoint_path}, initializing new model.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
 
+    # Initialize RL agent with model and tokenizer
     agent = RLChessAgent(model=model, tokenizer=tokenizer, device=device)
 
     board = chess.Board()
@@ -137,7 +162,6 @@ def main():
         print()
 
     agent.close()
-
 
 if __name__ == "__main__":
     main()
