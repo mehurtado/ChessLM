@@ -1,0 +1,6 @@
+
+torch>=2.0.0
+python-chess>=1.999
+stockfish>=3.28.0
+PyYAML>=6.0
+tqdm>=4.65.0

@@ -1,0 +1,33 @@
+# Test configuration with minimal training steps
+
+# Model settings
+model:
+  vocab_size: 250
+  d_model: 128
+  num_layers: 2
+  num_heads: 2
+  max_seq_len: 128
+  dropout: 0.1
+
+# Training settings
+training:
+  learning_rate: 0.001
+  batch_size: 2
+  max_steps: 10
+  eval_steps: 5
+  save_steps: 10
+  warmup_steps: 2
+
+# Data settings
+data:
+  max_games: 100
+  min_moves: 10
+  max_moves: 100
+  stockfish_depth: 10
+  stockfish_skill: 15
+
+# Paths
+paths:
+  data_dir: "data"
+  checkpoint_dir: "checkpoints"
+  model_save_path: "checkpoints/chess_transformer_test.pt"
