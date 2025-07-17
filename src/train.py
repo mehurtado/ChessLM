@@ -159,36 +159,46 @@ class SimpleTrainer:
         
         return loss.item()
     
-    def evaluate(self) -> float:
+    def evaluate(self) -> (float, Dict[str, Any]):
         """Evaluate model on a subset of training data.
-        
+
         Returns:
-            Average loss
+            Average loss, and a sample dict with input and output tokens
         """
         self.model.eval()
-        
+
         total_loss = 0
         num_batches = 0
-        
+        sample = None
+
         with torch.no_grad():
             for batch in self.train_loader:
                 if num_batches >= 10:  # Evaluate on 10 batches
                     break
-                
+
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
                 labels = batch["labels"].to(self.device)
-                
+
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=labels
                 )
-                
+
                 total_loss += outputs["loss"].item()
                 num_batches += 1
-        
-        return total_loss / num_batches if num_batches > 0 else float('inf')
+
+                if sample is None:
+                    # Take first batch as sample
+                    sample = {
+                        "input_ids": input_ids[0].cpu(),
+                        "labels": labels[0].cpu(),
+                        "logits": outputs["logits"][0].cpu()  # Assuming model returns logits
+                    }
+
+        avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+        return avg_loss, sample
     
     def save_checkpoint(self, path: str) -> None:
         """Save model checkpoint.
@@ -262,19 +272,24 @@ class SimpleTrainer:
                 
                 # Evaluation
                 if self.step % eval_steps == 0:
-                    eval_loss = self.evaluate()
+                    eval_loss, sample = self.evaluate()
                     logger.info(f"Step {self.step}: train_loss={loss:.4f}, eval_loss={eval_loss:.4f}")
-                    
+                    print(f"Step {self.step}: train_loss={loss:.4f}, eval_loss={eval_loss:.4f}")
+
+                    # Decode input tokens
+                    input_tokens = self.tokenizer.decode(sample["input_ids"].tolist())
+                    print(f"Sample input sequence: {input_tokens}")
+
+                    # Get predicted tokens from logits (argmax)
+                    predicted_ids = sample["logits"].argmax(dim=-1).tolist()
+                    predicted_tokens = self.tokenizer.decode(predicted_ids)
+                    print(f"Model output sequence: {predicted_tokens}")
+
                     # Save best model
                     if eval_loss < self.best_loss:
                         self.best_loss = eval_loss
                         best_model_path = Path(self.config["paths"]["checkpoint_dir"]) / "best_model.pt"
                         self.save_checkpoint(str(best_model_path))
-                
-                # Save checkpoint
-                if self.step % save_steps == 0:
-                    checkpoint_path = Path(self.config["paths"]["checkpoint_dir"]) / f"checkpoint_step_{self.step}.pt"
-                    self.save_checkpoint(str(checkpoint_path))
         
         pbar.close()
         
