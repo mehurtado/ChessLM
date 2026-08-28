@@ -5,7 +5,7 @@ import logging
 import os
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 import torch
 import torch.nn as nn
@@ -159,7 +159,7 @@ class SimpleTrainer:
         
         return loss.item()
     
-    def evaluate(self) -> (float, Dict[str, Any]):
+    def evaluate(self) -> Tuple[float, Dict[str, Any]]:
         """Evaluate model on a subset of training data.
 
         Returns:
