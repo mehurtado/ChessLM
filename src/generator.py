@@ -87,7 +87,7 @@ class SimpleStockfishGenerator:
                 depth=self.depth,
                 parameters={
                     "Skill Level": self.skill_level,
-                    "UCI_LimitStrength": "true" if self.skill_level < 20 else "false",
+                    "UCI_LimitStrength": True if self.skill_level < 20 else False,
                 }
             )
             
